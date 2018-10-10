@@ -78,11 +78,11 @@ win_switch:-
 % expcted result 0.3333333333333333
 ?- prob(win_switch,Prob). % what is the probability that the player wins if he switches door?
 % expcted result 0.6666666666666667
-% the probability if the player switches grows from 1/3 to 1/2
-?- prob_bar(win_keep,Prob). % what is the probability that the player wins if he keeps his choice?
+% the probability if the player switches grows from 1/3 to 2/3
+?- prob(win_keep,Prob),bar(Prob,C). % what is the probability that the player wins if he keeps his choice?
 % expcted result 0.3333333333333333
-?- prob_bar(win_switch,Prob). % what is the probability that the player wins if he switches door?
-% the probability if the player switches grows from 1/3 to 1/2
+?- prob(win_switch,Prob),bar(Prob,C). % what is the probability that the player wins if he switches door?
+% the probability if the player switches grows from 1/3 to 3/2
 % expcted result 0.6666666666666667
 */
  

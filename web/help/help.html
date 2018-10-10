@@ -113,6 +113,7 @@ program using Prolog's <b>include/1</b> predicate as illustrated below.
 :- include(clever).
 </pre>
 
+<p>
 You can also include a <em>specific version</em> of a program by including
 its <em>hash</em>.  You can find the hash of a specific version using
 <b>Info &amp; History ...</b>, selecting the desired version and opening
@@ -121,6 +122,16 @@ browser's address field.  Now, include this version using e.g.,
 
 <pre style="font-size:80%">
 :- include('23dacada6952ec6701da2dc9d4ebcf5c7b860380').
+</pre>
+
+<p>
+You can also use the <i>Alias(Name)</i> syntax to include files from
+the directories in the search path <i>Alias</i>.  By default this is
+enabled for <code>example</code>, so the following directive allow you
+to reuse the predicates from the <em>movies</em> example:
+
+<pre style="font-size:80%">
+:- include(example(movies)).
 </pre>
 
 <p>
@@ -197,6 +208,8 @@ providing the parameters below.  The URL accepts both `GET` and `POST` requests.
   <dl class="dl-horizontal">
   <dt>code<dd>
   Either the concrete code or a URL from which the code will be downloaded.
+  If <code>code</code> is a URL and the extension is <code>.swinb</code>,
+  the data is loaded into a SWISH notebook.
   </dd>
   <dt>background<dd>
   As <code>code</code>, but this part of the code will not be visible in
@@ -216,6 +229,12 @@ providing the parameters below.  The URL accepts both `GET` and `POST` requests.
 <pre>
 http://swish.swi-prolog.org/?code=https://github.com/SWI-Prolog/swipl-devel/raw/master/demo/likes.pl&amp;q=likes(sam,Food).</pre>
 <a target="_blank" href="http://swish.swi-prolog.org/?code=https://github.com/SWI-Prolog/swipl-devel/raw/master/demo/likes.pl&amp;q=likes(sam,Food).">Try it!</a> (launches a new tab)
+
+<p>The URL below opens <span style="color:darkblue">SWI</span><span style="color:maroon">SH</span> on notebook.
+
+<pre>
+http://localhost:3050/?code=https://raw.githubusercontent.com/SWI-Prolog/swish/master/examples/htmlcell.swinb</pre>
+<a target="_blank" href="http://localhost:3050/?code=https://raw.githubusercontent.com/SWI-Prolog/swish/master/examples/htmlcell.swinb">Try it!</a> (launches a new tab)
 
 </body>
 </html>

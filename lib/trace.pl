@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2015-2016, VU University Amsterdam
+    Copyright (c)  2015-2017, VU University Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -33,7 +33,7 @@
 */
 
 :- module(swish_trace,
-	  [ '$swish wrapper'/2		% +Goal, -Residuals
+	  [ '$swish wrapper'/2		% :Goal, ?ContextVars
 	  ]).
 :- use_module(library(debug)).
 :- use_module(library(settings)).
@@ -51,6 +51,7 @@
 :- use_module(library(http/html_write)).
 
 :- use_module(storage).
+:- use_module(config).
 
 :- if(current_setting(swish:debug_info)).
 :- set_setting(swish:debug_info, true).
@@ -73,7 +74,22 @@ Allow tracing pengine execution under SWISH.
 user:message_hook(trace_mode(_), _, _) :-
 	pengine_self(_), !.
 
+%!	trace_pengines
+%
+%	If true, trace in the browser. If false, use the default tracer.
+%	This allows for debugging  pengine   issues  using the graphical
+%	tracer from the Prolog environment using:
+%
+%	    ?- retractall(swish_trace:trace_pengines).
+%	    ?- tspy(<some predicate>).
+
+:- dynamic
+	trace_pengines/0.
+
+trace_pengines.
+
 user:prolog_trace_interception(Port, Frame, _CHP, Action) :-
+	trace_pengines,
 	pengine_self(Pengine),
 	prolog_frame_attribute(Frame, predicate_indicator, PI),
 	debug(trace, 'HOOK: ~p ~p', [Port, PI]),
@@ -100,6 +116,7 @@ user:prolog_trace_interception(Port, Frame, _CHP, Action) :-
 	trace_action(Reply, Port, Frame, Action), !,
 	debug(trace, 'Action: ~p --> ~p', [Reply, Action]).
 user:prolog_trace_interception(Port, Frame0, _CHP, nodebug) :-
+	trace_pengines,
 	pengine_self(_),
 	prolog_frame_attribute(Frame0, goal, Goal),
 	prolog_frame_attribute(Frame0, level, Depth),
@@ -182,16 +199,32 @@ strip_stack(error(Error, context(prolog_stack(S), Msg)),
 	nonvar(S).
 strip_stack(Error, Error).
 
-%%	'$swish wrapper'(:Goal, -Residuals)
+%%	'$swish wrapper'(:Goal, ?ContextVars)
 %
 %	Wrap a SWISH goal in '$swish  wrapper'. This has two advantages:
 %	we can detect that the tracer is   operating  on a SWISH goal by
 %	inspecting the stack and we can  save/restore the debug state to
 %	deal with debugging next solutions.
+%
+%	ContextVars is a list of variables   that  have a reserved name.
+%	The hooks pre_context/3 and post_context/3 can   be used to give
+%	these variables a value  extracted   from  the environment. This
+%	allows passing more information than just the query answers.
+%
+%	The binding `_residuals = '$residuals'(Residuals)`   is added to
+%	the   residual   goals   by     pengines:event_to_json/4    from
+%	pengines_io.pl.
 
 :- meta_predicate swish_call(0).
 
-'$swish wrapper'(Goal, '$residuals'(Residuals)) :-
+'$swish wrapper'(Goal, Extra) :-
+	(   nb_current('$variable_names', Bindings)
+	->  true
+	;   Bindings = []
+	),
+	debug(projection, 'Pre-context-pre ~p, extra=~p', [Bindings, Extra]),
+	maplist(call_pre_context(Goal, Bindings), Extra),
+	debug(projection, 'Pre-context-post ~p, extra=~p', [Bindings, Extra]),
 	catch(swish_call(Goal), E, throw(E)),
 	deterministic(Det),
 	(   tracing,
@@ -204,8 +237,7 @@ strip_stack(Error, Error).
 	    )
 	;   notrace
 	),
-	Goal = M:_,
-	residuals(M, Residuals).
+	maplist(call_post_context(Goal, Bindings), Extra).
 
 swish_call(Goal) :-
 	Goal,
@@ -216,6 +248,38 @@ no_lco.
 :- '$hide'(swish_call/1).
 :- '$hide'(no_lco/0).
 
+%!	pre_context(Name, Goal, Var) is semidet.
+%!	post_context(Name, Goal, Var) is semidet.
+%
+%	Multifile hooks to  extract  additional   information  from  the
+%	Pengine, either just before Goal is   started or after an answer
+%	was  produced.  Extracting  the  information   is  triggered  by
+%	introducing a variable with a reserved name.
+
+:- multifile
+	pre_context/3,
+	post_context/3.
+
+call_pre_context(Goal, Bindings, Var) :-
+	binding(Bindings, Var, Name),
+	pre_context(Name, Goal, Var), !.
+call_pre_context(_, _, _).
+
+
+call_post_context(Goal, Bindings, Var) :-
+	binding(Bindings, Var, Name),
+	post_context(Name, Goal, Var), !.
+call_post_context(_, _, _).
+
+post_context(Name, M:_Goal, '$residuals'(Residuals)) :-
+	swish_config(residuals_var, Name),
+	residuals(M, Residuals).
+
+binding([Name=Var|_], V, Name) :-
+	Var == V, !.
+binding([_|Bindings], V, Name) :-
+	binding(Bindings, V, Name).
+
 
 %%	residuals(+PengineModule, -Goals:list(callable)) is det.
 %
@@ -224,10 +288,7 @@ no_lco.
 %	goals typically live in global variables   that  are not visible
 %	when formulating the answer  from   the  projection variables as
 %	done in library(pengines_io).
-%
-%	This relies on the SWI-Prolog 7.3.14 residual goal extension.
 
-:- if(current_predicate(prolog:residual_goals//0)).
 residuals(TypeIn, Goals) :-
 	phrase(prolog:residual_goals, Goals0),
 	maplist(unqualify_residual(TypeIn), Goals0, Goals).
@@ -236,9 +297,6 @@ unqualify_residual(M, M:G, G) :- !.
 unqualify_residual(T, M:G, G) :-
 	predicate_property(T:G, imported_from(M)), !.
 unqualify_residual(_, G, G).
-:- else.
-residuals(_, []).
-:- endif.
 
 
 		 /*******************************
@@ -468,12 +526,47 @@ find_source(Predicate, File, Line) :-
 :- multifile pengines:prepare_goal/3.
 
 pengines:prepare_goal(Goal0, Goal, Options) :-
+	forall(set_screen_property(Options), true),
 	option(breakpoints(Breakpoints), Options),
 	Breakpoints \== [],
 	pengine_self(Pengine),
 	pengine_property(Pengine, source(File, Text)),
 	maplist(set_file_breakpoints(Pengine, File, Text), Breakpoints),
 	Goal = (debug, Goal0).
+
+%!	swish:tty_size(-Rows, -Cols)
+%
+%	Emulate obtaining the screen size. Note that the reported number
+%	of columns is the height  of  the   container  as  the height of
+%	answer pane itself is determined by the content.
+
+set_screen_property(Options) :-
+	pengine_self(Pengine),
+	screen_property(Property),
+	option(Property, Options),
+	assertz(Pengine:screen_property(Property)).
+
+screen_property(height(_)).
+screen_property(width(_)).
+screen_property(rows(_)).
+screen_property(cols(_)).
+
+%!	swish:tty_size(-Rows, -Cols) is det.
+%
+%	Find the size of the output window. This is only registered when
+%	running _ask_. Notably during compilation it   is  not known. We
+%	provided dummy values to avoid failing.
+
+swish:tty_size(Rows, Cols) :-
+	pengine_self(Pengine),
+	current_predicate(Pengine:screen_property/1), !,
+	Pengine:screen_property(rows(Rows)),
+	Pengine:screen_property(cols(Cols)).
+swish:tty_size(24, 80).
+
+%!	set_file_breakpoints(+Pengine, +File, +Text, +Dict)
+%
+%	Set breakpoints for included files.
 
 set_file_breakpoints(_Pengine, PFile, Text, Dict) :-
 	debug(trace(break), 'Set breakpoints at ~p', [Dict]),
@@ -490,11 +583,15 @@ set_file_breakpoints(_Pengine, PFile, Text, Dict) :-
 	;   debug(trace(break), 'Not in included source', [])
 	).
 
+%!	set_pengine_breakpoint(+Pengine, +File, +Text, +Dict)
+%
+%	Set breakpoints on the main Pengine source
+
 set_pengine_breakpoint(Owner, File, Text, Line) :-
 	debug(trace(break), 'Try break at ~q:~d', [File, Line]),
 	line_start(Line, Text, Char),
-	(   set_breakpoint(Owner, File, Line, Char, Break)
-	->  !, debug(trace(break), 'Created breakpoint ~p', [Break])
+	(   set_breakpoint(Owner, File, Line, Char, _0Break)
+	->  !, debug(trace(break), 'Created breakpoint ~p', [_0Break])
 	;   print_message(warning, breakpoint(failed(File, Line, 0)))
 	).
 
@@ -587,6 +684,9 @@ prolog_clause:open_source(File, Stream) :-
 	user:prolog_exception_hook/4,
 	installed/1.
 
+:- volatile
+	installed/1.
+
 exception_hook(Ex, Ex, _Frame, Catcher) :-
 	Catcher \== none,
 	Catcher \== 'C',
@@ -613,7 +713,7 @@ install_exception_hook :-
 			exception_hook(Ex, Out, Frame, Catcher)), Ref),
 	assert(installed(Ref)).
 
-:- install_exception_hook.
+:- initialization install_exception_hook.
 
 
 		 /*******************************
@@ -621,7 +721,8 @@ install_exception_hook :-
 		 *******************************/
 
 :- multifile
-	sandbox:safe_primitive/1.
+	sandbox:safe_primitive/1,
+	sandbox:safe_meta_predicate/1.
 
 sandbox:safe_primitive(system:trace).
 sandbox:safe_primitive(system:notrace).
@@ -629,6 +730,9 @@ sandbox:safe_primitive(system:tracing).
 sandbox:safe_primitive(edinburgh:debug).
 sandbox:safe_primitive(system:deterministic(_)).
 sandbox:safe_primitive(swish_trace:residuals(_,_)).
+sandbox:safe_primitive(swish:tty_size(_Rows, _Cols)).
+
+sandbox:safe_meta_predicate(swish_trace:'$swish wrapper'/2).
 
 
 		 /*******************************

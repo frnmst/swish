@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@cs.vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (C): 2014-2016, VU University Amsterdam
+    Copyright (C): 2014-2018, VU University Amsterdam
 			      CWI Amsterdam
     All rights reserved.
 
@@ -44,10 +44,11 @@
  * @requires editor
  */
 
-define([ "jquery", "config", "preferences", "cm/lib/codemirror",
+define([ "jquery", "config", "preferences", "cm/lib/codemirror", "modal",
+	 "utils",
 	 "laconic", "editor"
        ],
-       function($, config, preferences, CodeMirror) {
+       function($, config, preferences, CodeMirror, modal, utils) {
 
 (function($) {
   var pluginName = 'queryEditor';
@@ -74,7 +75,8 @@ define([ "jquery", "config", "preferences", "cm/lib/codemirror",
 	var qediv  = $.el.div({class:"query"});
 	var tabled = tableCheckbox(data);
 
-	elem.addClass("prolog-query-editor swish-event-receiver reactive-size");
+	elem.addClass("prolog-query-editor swish-event-receiver reactive-size " +
+		      "unloadable");
 
 	elem.append(qediv,
 		    $.el.div({class:"prolog-prompt"}, "?-"),
@@ -115,11 +117,48 @@ define([ "jquery", "config", "preferences", "cm/lib/codemirror",
 	elem.on("current-program", function(ev, editor) {
 	  elem[pluginName]('setProgramEditor', $(editor));
 	});
-	elem.on("program-loaded", function(ev, editor) {
-	  if ( $(data.editor).data('prologEditor') ==
-	       $(editor).data('prologEditor') ) {
-	    var exl = data.examples();
-	    elem.queryEditor('setQuery', exl && exl[0] ? exl[0] : "");
+	elem.on("program-loaded", function(ev, options) {
+	  var query = options.query;
+
+	  if ( query != null ) {		/* null: keep */
+	    if ( query == undefined ) {
+	      if ( $(data.editor).data('prologEditor') ==
+		   $(options.editor).data('prologEditor') ) {
+		var exl = data.examples();
+		query = exl && exl[0] ? exl[0] : "";
+	      }
+	    }
+	    elem.queryEditor('setQuery', query);
+	  }
+	});
+	elem.on("unload", function(ev, rc) {
+	  if ( elem.closest(".swish").swish('preserve_state') ) {
+	    var state = elem[pluginName]('getState');
+	    if ( state )
+	      localStorage.setItem("query", JSON.stringify(state));
+	  }
+	});
+	elem.on("restore", function(ev, rc) {
+	  if ( elem[pluginName]('getQuery') == "" ) {
+	    var state;
+	    // called with explicit query
+	    // TBD: not save in this case?
+	    try {
+	      var str = localStorage.getItem("query");
+	      if ( str )
+		state = JSON.parse(str);
+	    } catch(err) {
+	    }
+
+	    if ( state && typeof(state) == "object" ) {
+	      elem[pluginName]('setState', state);
+	    }
+	  }
+	});
+	elem.on("preference", function(ev, pref) {
+	  if ( pref.name == "preserve-state" &&
+	       pref.value == false ) {
+	    localStorage.removeItem("query");
 	  }
 	});
       });
@@ -142,7 +181,7 @@ define([ "jquery", "config", "preferences", "cm/lib/codemirror",
 	  var global = editor.parents(".swish").swish('examples', true)||[];
 
 	  if ( $.isArray(global) )
-	  exl.concat(global);
+	    exl.concat(global);
 
 	  return exl;
 	};
@@ -217,10 +256,31 @@ define([ "jquery", "config", "preferences", "cm/lib/codemirror",
 
       if ( clear === true )
 	ul.html("");
+      ul.find("li.add-example, li.divider").remove();
       for(var i=0; i<list.length; i++) {
 	ul.append($.el.li($.el.a(list[i])));
       }
       ul.data('examples', list.slice(0));
+      ul.append($.el.li({class:"divider"}));
+      ul.append($.el.li({class:'add-example'},
+			$.el.a("Add current query to examples")));
+
+      return this;
+    },
+
+    /**
+     * Add the current query to the examples in the program
+     */
+    addExample: function()
+    { var query	= this.find(".query").prologEditor('getSource');
+
+      if ( query.trim() != "" ) {
+	$(".swish-event-receiver:visible")
+	     .trigger("addExample",
+		      this.find(".query").prologEditor('getSource'));
+      } else
+      { modal.alert("The query window is empty");
+      }
 
       return this;
     },
@@ -243,15 +303,47 @@ define([ "jquery", "config", "preferences", "cm/lib/codemirror",
 
       if ( query ) {
 	var li;
+	var a;
 
 	if ( (li=findInHistory()) )
 	  li.remove();
 	if ( ul.children().length >= data.maxHistoryLength )
 	  ul.children().first().remove();
-	ul.append($.el.li($.el.a(query)));
+	ul.append($.el.li(a=$.el.a(query)));
+	$(a).data('time', (new Date().getTime())/1000);
       }
 
       return this;
+    },
+
+    /**
+     * @return {Array} An arrayt of strings representing the
+     * current history.
+     */
+    getHistory: function() {
+      var ul   = this.find("ul.history");
+      var h = [];
+
+      ul.children().each(function() {
+	var a =	$(this).find("a");
+	h.push({
+	  query: a.text(),
+	  time:  a.data('time')
+	});
+      });
+
+      return h;
+    },
+
+    restoreHistory: function(h) {
+      var ul   = this.find("ul.history");
+
+      ul.html("");
+      for(var i=0; i<h.length; i++) {
+	var a;
+	ul.append($.el.li(a= $.el.a(h[i].query)));
+	$(a).data('time', h[i].time);
+      }
     },
 
     /**
@@ -285,6 +377,18 @@ define([ "jquery", "config", "preferences", "cm/lib/codemirror",
      */
     getQuery: function() {
       return this.find(".query").prologEditor('getSource', "query");
+    },
+
+    getState: function() {
+      return {
+        query:   this[pluginName]('getQuery'),
+        history: this[pluginName]('getHistory')
+      };
+    },
+
+    setState: function(state) {
+      this[pluginName]('restoreHistory', state.history||[]);
+      this[pluginName]('setQuery', state.query||"");
     },
 
     /**
@@ -336,7 +440,7 @@ define([ "jquery", "config", "preferences", "cm/lib/codemirror",
   */
 
   function Q(from) {
-    return $(from).parents(".prolog-query-editor");
+    return $(from).closest(".prolog-query-editor");
   }
 
   function dropup(cls, label, options) {
@@ -350,7 +454,12 @@ define([ "jquery", "config", "preferences", "cm/lib/codemirror",
       $.el.ul({class:"dropdown-menu "+cls}));
 
     $(dropup).on("click", "a", function() {
-      Q(this).queryEditor('setQuery', $(this).text());
+      var li = $(this).closest("li");
+
+      if ( li.hasClass("add-example") )
+	Q(this).queryEditor('addExample');
+      else
+	Q(this).queryEditor('setQuery', $(this).text());
     });
 
     return dropup;
@@ -360,17 +469,22 @@ define([ "jquery", "config", "preferences", "cm/lib/codemirror",
     var el = dropup("examples", "Examples", options);
     var ul = $(el).find("ul");
 
-    function updateExamples(options) {
-      var list = options.examples();
+    function updateExamples(ev) {
+      var qe   = $(ev.target).closest(".prolog-query-editor");
+      var data = qe.data(pluginName);
 
-      if ( $.isArray(list) )
-	Q(el).queryEditor('setExamples', list, true);
+      if ( data && typeof(data.examples) == "function" ) {
+	var list = data.examples();
+
+	if ( $.isArray(list) )
+	  Q(el).queryEditor('setExamples', list, true);
+      }
     }
 
     if ( typeof(options.examples) == "function" ) {
       $(el).mousedown(function(ev) {
 			if ( ev.which == 1 ) {
-			  updateExamples(options);
+			  updateExamples(ev);
 			}
 		      });
     } else if ( options.examples ) {
@@ -385,7 +499,14 @@ define([ "jquery", "config", "preferences", "cm/lib/codemirror",
   }
 
   function historyButton(options) {
-    return dropup("history", "History", options);
+    var menu = dropup("history", "History", options);
+
+    $(menu).on("mouseenter", "li", function(ev) {
+      var a = $(ev.target).closest("li").find("a");
+      a.attr("title", utils.ago(a.data('time')));
+    });
+
+    return menu;
   }
 
   function aggregateButton(options) {
@@ -393,6 +514,7 @@ define([ "jquery", "config", "preferences", "cm/lib/codemirror",
     var list = options.aggregates ||
       [ "Aggregate (count all)",
 	"--",
+	"Projection",
 	"Order by",
 	"Distinct",
 	"Limit",

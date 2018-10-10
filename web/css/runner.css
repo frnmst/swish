@@ -10,7 +10,8 @@ div.prolog-runners {
 
 div.prolog-runner {
   position: relative;
-  margin: 2px 0px 2px;		/* top,left/right,bottom */
+  padding: 2px 0px 2px;		/* top,left/right,bottom */
+  margin: 0px;
   border: 1px solid #ccc;
   border-radius: 5px;
 }
@@ -19,11 +20,34 @@ div.prolog-runner.tabled {
   border: 0px;
 }
 
-div.prolog-runner > a.close {
+div.prolog-runner > div.runner-title.runner-button-group {
+  color: #fff;
+  background: #000;
+  display: none;
+  border: 2px solid #fff;
   position: absolute;
-  top: -4px;
-  right: -10px;
+  top: -1px;
+  right: -1px;
   z-index: 10;
+  box-shadow: -6px 6px 5px #888888;
+}
+
+div.prolog-runner.tabled > div.runner-title.runner-button-group {
+  top: 2px;
+}
+
+div.prolog-runner:hover > div.runner-title.runner-button-group {
+  display: block;
+}
+
+div.runner-title.runner-button-group > button {
+  color: #fff;
+  opacity: 0.8;
+  text-shadow: 0 1px 0 #000;
+}
+
+div.runner-title.runner-button-group > button:hover {
+  opacity: 1;
 }
 
 div.prolog-runner:focus {
@@ -33,13 +57,13 @@ div.prolog-runner:focus {
 div.prolog-runner.iconic > div.runner-results { display: none; }
 
 div.runner-title {
-  padding: 0px 5px 2px;
-  border-width: 2px;
+  padding: 0px 5px 0px;
+  border: 2px solid #333;
   border-radius: 5px;
   box-sizing: border-box;
 }
 
-div.prolog-runner:focus div.runner-title {
+div.prolog-runner:focus div.panel-heading {
   border: 2px solid #000;
 }
 
@@ -115,7 +139,7 @@ div.runner-title > button {
 }
 
 div.runner-title > button.rtb-toggleIconic
-{ padding: 8px 0px;
+{ padding: 6px 0px 0px 0px;
 }
 
 div.runner-title > button:hover {

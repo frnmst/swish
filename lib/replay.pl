@@ -103,7 +103,8 @@ replay :-
 	pengine_in_log(Pengine, _StartTime, Src),
 	\+ skip_pengine_store(Pengine),
 	Src \== (-),
-	replay(Pengine).
+	catch(replay(Pengine), E,
+	      print_message(warning, E)).
 
 replay_after(Time) :-
 	pengine_in_log(Pengine, StartTime, Src),
@@ -143,14 +144,14 @@ replay(Pengine) :-
 
 replay(Pengine, URL) :-
 	pengine_interaction(Pengine, StartTime, CreateOptions, Messages),
+	format_time(string(D), '%+', StartTime),
+	debug(playback(create), '*** ~q at ~s', [Pengine, D]),
+	show_source(CreateOptions),
 	pengine_create([ server(URL),
 			 id(Id)
 		       | CreateOptions
 		       ]),
-	format_time(string(D), '%+', StartTime),
-	debug(playback(create), '*** ~q at ~s', [Pengine, D]),
 	debug(playback(create), '*** ~q', [Id]),
-	show_source(CreateOptions),
 	get_time(Now),
 	run(Messages, Now, Id, []).
 
@@ -186,8 +187,14 @@ reply(output(_Id, Prompt), Pengine, StartTime, [Time-pull_response|T], T) :- !,
 	debug(playback(event), 'Output ~p (pull_response)', [Prompt]),
 	sync_time(StartTime, Time),
 	pengine_pull_response(Pengine, []).
-reply(error(Id, error(time_limit_exceeded,_)), Pengine, _, Msgs, []) :- !,
+reply(error(Id, time_limit_exceeded), Pengine, _, Msgs, []) :- !,
 	catch(pengine_destroy(Id), _, true),
+	(   Msgs == []
+	->  true
+	;   print_message(error, replay(Pengine, timeout(Msgs)))
+	).
+reply(destroy(Id, error(Id, time_limit_exceeded)),
+      Pengine, _, Msgs, []) :- !,
 	(   Msgs == []
 	->  true
 	;   print_message(error, replay(Pengine, timeout(Msgs)))

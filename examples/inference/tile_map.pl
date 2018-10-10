@@ -1,8 +1,7 @@
-
+/* Tile Map Generation */
 
 /** <examples>
 
-?- Height=10,Width=10,mc_mh_sample_arg(map(Height,Width,M),constraints(Height,Width),1,1,M,[[Map] - _]).
 ?- Height=10,Width=10,mc_sample_arg_first(map(Height,Width,M),1,M,[ Map- _ ]).
 
 */
@@ -38,48 +37,24 @@ pick_row(H,W,N,T,M0,M):-
 % the center tile is water
 pick_tile(HC,WC,H,W,water):-
   HC is H//2,
-  WC is W//2.
+  WC is W//2,!.
+
+% in the central area water is more probable (there tend to be a lake in the
+% center)
+pick_tile(Y,X,H,W,T):discrete(T,[grass:0.05,water:0.9,tree:0.025,rock:0.025]):-
+  central_area(Y,X,H,W),!.
 
 % on the other places tiles are chosen at random with this distribution
-pick_tile(Y,_,H,_,T):discrete(T,[grass:0.5,water:0.2,tree:0.1,rock:0.1]):-
-  Y =\= H//2.
+pick_tile(_,_,_,_,T):discrete(T,[grass:0.5,water:0.3,tree:0.1,rock:0.1]).
 
-pick_tile(Y,X,H,W,T):discrete(T,[grass:0.5,water:0.2,tree:0.1,rock:0.1]):-
-  Y is H//2,
-  X =\= W//2.
-
-% constraints after map generation (soft constraints)
-% tiles adjacent to water are more probably water
-% Markov logic constraint:
-% -ln 0.1 forall Y,X,Y1,X1 such that adjacent(Y,X,Y1,X1,H,W):
-% pick_tile(Y,X,H,W,water)=>pick_tile(Y1,X1,H,W,water)
-
-constraint_water(Y,X,_Y1,_X1,H,W):-
-  pick_tile(Y,X,H,W,T),
-  T \= water.
-
-constraint_water(_Y,_X,Y1,X1,H,W):-
-  pick_tile(Y1,X1,H,W,water).
-
-constraint_water(Y,X,Y1,X1,H,W):0.1:-
-  pick_tile(Y,X,H,W,water),
-  \+ pick_tile(Y1,X1,H,W,water).
-
-constraints(H,W):-
-  HC is H//2,
-  WC is W//2,
-  H1 is HC,
-  H2 is HC,
-  W1 is WC,
-  W2 is WC,
-  findall((Y,X,Y1,X1),(
-    between(H1,H2,Y),between(W1,W2,X),adjacent(Y,X,Y1,X1,H,W)),L),
-  maplist(call_const(H,W),L).
-
-call_const(H,W,(Y,X,Y1,X1)):-
-  constraint_water(Y,X,Y1,X1,H,W).
 
 :-end_lpad.
+
+central_area(Y,X,H,W):-
+  HC is H//2,
+  WC is W//2,
+  adjacent(HC,WC,Y1,X1,H,W),
+  adjacent(Y1,X1,Y,X,H,W).
 
 adjacent(Y,X,Y1,X1,H,W):-
   Y >= 1, Y =< H,
@@ -145,7 +120,10 @@ tile_names(T):-
 tiles(T):-
   findall(tile(Tile,URL),tile(Tile,URL),T).
 
-tile(grass,'/icons/tiles/grass.png').
-tile(water,'/icons/tiles/water.png').
-tile(rock,'/icons/tiles/rock.png').
-tile(tree,'/icons/tiles/tree.png').
+% available tiles
+% format: tile(name,URL)
+% tiles from https://github.com/silveira/openpixels
+tile(grass,'http://cplint.lamping.unife.it/icons/tiles/grass.png').
+tile(water,'http://cplint.lamping.unife.it//icons/tiles/water.png').
+tile(rock,'http://cplint.lamping.unife.it//icons/tiles/rock.png').
+tile(tree,'http://cplint.lamping.unife.it//icons/tiles/tree.png').

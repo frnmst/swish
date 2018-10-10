@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2014-2015, VU University Amsterdam
+    Copyright (c)  2014-2017, VU University Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -42,7 +42,7 @@
 :- use_module(library(lists)).
 :- use_module(library(settings)).
 
-:- use_module(gitty).
+:- use_module(storage).
 
 /** <module> Serve example files
 
@@ -65,9 +65,16 @@ user:file_search_path(example, swish(examples/learning)).
 user:file_search_path(example, swish(examples/lemur)).
 user:file_search_path(example, swish(examples/aleph)).
 
+user:file_search_path(e, swish(examples)).
+user:file_search_path(e, swish(examples/inference)).
+user:file_search_path(e, swish(examples/learning)).
+user:file_search_path(e, swish(examples/lemur)).
+user:file_search_path(e, swish(examples/aleph)).
+
 
 % make SWISH serve /example/File as example(File).
 swish_config:source_alias(example, [access(read), search('*.{pl,swinb}')]).
+swish_config:source_alias(e, [access(read), search('*.{pl,swinb}')]).
 
 :- http_handler(swish(list_examples),
 		list_examples, [id(swish_examples)]).
@@ -155,9 +162,8 @@ storage_examples(List) :-
 storage_examples([]).
 
 gitty_example(json{title:Title, file:File, type:"store"}) :-
-	setting(web_storage:directory, Store),
-	gitty_file(Store, File, _),
-	gitty_commit(Store, File, Meta),
+	storage_file(File),
+	storage_meta_data(File, Meta),
 	Meta.get(example) == true,
 	(   Title = Meta.get(title), Title \== ""
 	->  true

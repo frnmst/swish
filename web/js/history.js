@@ -44,8 +44,8 @@
  * @author Jan Wielemaker, J.Wielemaker@vu.nl
  */
 
-define(["jquery", "preferences"],
-       function($, preferences) {
+define(["jquery", "preferences", "form", "utils"],
+       function($, preferences, form, utils) {
   var history = {
 
 		 /*******************************
@@ -53,37 +53,28 @@ define(["jquery", "preferences"],
 		 *******************************/
 
     /**
-     * Push a new entry to the browser history.
-     * FIXME: Safe history menu of the query window.
-     * FIXME: Deal with unsafed data.
+     * Push a new entry to the browser history.  Since we have tabs,
+     * there isn't much reason for a back button.  We merely use the
+     * history to switch the location bar to the current document.
      */
-    push: function(reply) {
+    push: function(options) {
       var cpath = window.location.pathname;
 
-      if ( cpath != reply.url ) {
-	var state = {location:reply.url};
+      if ( cpath != options.url ) {
+	var state = {location: options.url, reason: options.reason};
 
-	if ( reply.meta )
-	  state.meta = reply.meta;
-
-	window.history.pushState(state, "", reply.url);
+	window.history.pushState(state, "", options.url);
 	document.title = "SWISH -- "
-                       + (reply.file ? reply.file
-			             : "SWI-Prolog for SHaring");
+                       + (options.url ? utils.basename(options.url)
+			              : "SWI-Prolog for SHaring");
       }
     },
 
     /**
-     * Restore a previous browser history state
+     * Restore a previous browser history state.  simply ignores.
+     * See push() for details.
      */
     pop: function(e) {
-      if ( e.state ) {
-	if ( e.state.meta && e.state.meta.name ) {
-	  $(".swish").swish('playFile', e.state.meta.name);
-	} else if ( e.state.location ) {
-	  window.location =  e.state.location;
-	}
-      }
     },
 
 		 /*******************************
@@ -138,10 +129,14 @@ define(["jquery", "preferences"],
       ul.html("");
       for(var i=0; i<recent.length; i++) {
 	var e = recent[i];
-	var a = $.el.a(e.label||e.id);
 
-	$(a).data('document', e);
-	ul.append($.el.li(a));
+	if ( e.id ) {
+	  var a = $.el.a(form.widgets.typeIcon(e.id.split(".").pop()),
+			 e.label||e.id);
+
+	  $(a).data('document', e);
+	  ul.append($.el.li(a));
+	}
       }
     }
   };

@@ -3,7 +3,8 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2014-2016, VU University Amsterdam
+    Copyright (c)  2014-2018, VU University Amsterdam
+			      CWI, Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -38,14 +39,20 @@
 	    swish_config_hash/2		% -HASH, +Options
 	  ]).
 :- use_module(library(http/http_dispatch)).
+:- use_module(library(http/http_path)).
 :- use_module(library(http/http_json)).
 :- use_module(library(option)).
+:- use_module(library(apply)).
 
 :- multifile
 	config/2,			% ?Key, ?Value
 	config/3,			% ?Key, ?Value, +Options
+	web_plugin/1,			% ?Dict
 	source_alias/2,			% ?Alias, ?Options
-	authenticate/2.			% +Request, -User
+	authenticate/2,			% +Request, -User
+        login_item/2,                   % -Server, -HTML_DOM
+        login/2,                        % +Server, +Request
+        user_info/3.                    % +Request, -Server, -Info
 
 /** <module> Make HTTP locations known to JSON code
 */
@@ -75,10 +82,12 @@ swish_config_hash(Hash, Options) :-
 
 json_config(json{ http: json{ locations:JSON
 			    },
-		  swish: SWISHConfig
+		  swish: SWISHConfig,
+		  plugins : Plugins
 		}, Options) :-
 	http_locations(JSON),
-	swish_config_dict(SWISHConfig, Options).
+	swish_config_dict(SWISHConfig, Options),
+	web_plugins(Plugins, Options).
 
 http_locations(JSON) :-
 	findall(ID-Path,
@@ -113,7 +122,53 @@ same_ids(T, _, T, []).
 
 swish_config_dict(Config, Options) :-
 	findall(Key-Value, swish_config(Key, Value, Options), Pairs),
-	dict_pairs(Config, json, Pairs).
+	keysort(Pairs, Sorted),
+	warn_duplicate_config(Sorted, Unique),
+	dict_pairs(Config, json, Unique).
+
+:- dynamic  warned_duplicate/1.
+:- volatile warned_duplicate/1.
+
+warn_duplicate_config([], []).
+warn_duplicate_config([K-V1,K-V2|T0], [K-V1|T]) :- !,
+	collect_same(K, T0, VL, T1),
+	(   warned_duplicate(K)
+	->  true
+	;   print_message(warning, swish(duplicate_config(K, [V1,V2|VL]))),
+	    assertz(warned_duplicate(K))
+	),
+	warn_duplicate_config(T1, T).
+warn_duplicate_config([KV|T0], [KV|T]) :- !,
+	warn_duplicate_config(T0, T).
+
+collect_same(K, [K-V|T0], [V|VT], T) :- !,
+	collect_same(K, T0, VT, T).
+collect_same(_, List, [], List).
+
+%!	web_plugins(-Plugins, +Options) is det.
+%
+%	Obtain a list of JSON dicts for additional web plugins.
+
+web_plugins(Plugins, _Options) :-
+	findall(Plugin, web_plugin_ex(Plugin), Plugins).
+
+web_plugin_ex(Plugin) :-
+	web_plugin(Plugin0),
+	dict_pairs(Plugin0, Tag, Pairs0),
+	maplist(expand_paths, Pairs0, Pairs),
+	dict_pairs(Plugin, Tag, Pairs).
+
+:- multifile http:location/3.
+:- dynamic   http:location/3.
+
+expand_paths(Name-Spec, Name-Path) :-
+	compound(Spec),
+	compound_name_arity(Spec, Alias, 1),
+	http:location(Alias, _, _),
+	!,
+	http_absolute_location(Spec, Path, []).
+expand_paths(Pair, Pair).
+
 
 %%	config(-Key, -Value) is nondet.
 %%	swish_config(-Key, -Value) is nondet.
@@ -135,6 +190,81 @@ swish_config(Key, Value, _) :-
 config(residuals_var, '_residuals').
 :- endif.
 
+		 /*******************************
+		 *             LOGIN		*
+		 *******************************/
+
+%!	login_item(-Server, -Item) is nondet.
+%
+%	This hook is called  to  find   all  possible  login options. It
+%	should bind Item to an HTML description for html//1 that must be
+%	clicked to login  with  this  option.   The  item  may  have the
+%	following HTML attributes:
+%
+%	  - 'data-server'(+Server)
+%	  This must be present and provides the first argument for the
+%	  login/2 hook.
+%
+%	  - 'data-frame'(+Style)
+%	  The login is realised in a popup to avoid reloading the
+%	  current swish page.  If Style is `popup`, a browser popup window
+%	  is used. This is necessary for identity providers that refuse to
+%	  open inside a frame. The default is `iframe`, which handles
+%	  the login inside an =iframe= element in a modal popup.
+%
+%	The Item is often  an  image.  The   image  must  have  a  class
+%	=login-with=. Below is an example to login with Google:
+%
+%	```
+%	swish_config:login_item(Item) :-
+%	    http_absolute_location(icons('social_google_box.png'), Img, []),
+%	    Item = img([ src(Img),
+%	                 class('login-with'),
+%	                 'data-server'(google),
+%	                 title('Login with Google')
+%	               ]).
+%	```
+%
+%	@arg Item may be of the form  `Tag-Item`. In this case the items
+%	are ordered by Tag. The default tag is `0`.
+
+%!	login(+Server, +Request) is det.
+%
+%	If a login item with   `'data-server'(+Server)`  is clicked, the
+%	HTTP handler with id `login` is called. This handler figures the
+%	selected login _server_ and calls this hook.
+
+%!	user_info(+Request, -Server, -UserInfo:dict) is semidet.
+%
+%	Each login facility must provide  this   hook.  The  hook should
+%	succeed if-and-only-if the user is logged in using this facility
+%	and the hook must bind UserInfo with   a  dict that contains the
+%	following fields:
+%
+%	  - user: User
+%	  User name (id) if the logged in user.
+%	  - name: Name
+%	  Common name of the logged in user.
+%	  - email: Email
+%	  Email address of the logged in user.
+%	  - picture: URL
+%	  If present, URL is used to indicate the currently logged in
+%	  user.
+%	  - auth_method: Method
+%	  Authentication method used. Currently one of `basic`, `digest`
+%	  or `oauth2`.
+%	  - logout_url: URL
+%	  URL that must be used to logout.  Needed if `auth_method` is
+%	  not one of the HTTP authentication methods (`basic` or
+%	  `digest`).
+%
+%	If this hook fails the user is not logged in.
+
+
+		 /*******************************
+		 *          OTHER HOOKS		*
+		 *******************************/
+
 %%	source_alias(?Alias, ?Options) is nondet.
 %
 %	Multifile hook that  defines   properties  of file_search_path/2
@@ -147,6 +277,7 @@ config(residuals_var, '_residuals').
 %	  given pattern in the matching directories.  Pattern is handed
 %	  to expand_file_name/2.
 
+
 		 /*******************************
 		 *	      MESSAGES		*
 		 *******************************/
@@ -157,6 +288,10 @@ config(residuals_var, '_residuals').
 prolog:message(http(duplicate_handlers(Id, Paths))) -->
 	[ 'Duplicate HTTP handler IDs: "~w"'-[Id] ],
 	paths(Paths).
+prolog:message(swish(duplicate_config(K, [V0|List]))) -->
+	[ 'Duplicate SWISH config values for "~w": ~p.  Using ~q'-
+	  [K, [V0|List], V0]
+	].
 
 paths([]) --> [].
 paths([H|T]) --> [ '\t~q'-[H], nl ], paths(T).

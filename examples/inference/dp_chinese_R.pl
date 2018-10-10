@@ -19,8 +19,8 @@ Moreover, they show the distribution of unique indexes as in
 http://www.robots.ox.ac.uk/~fwood/anglican/examples/viewer/?worksheet=nonparametrics/dp-mixture-model
 */
 /** <examples>
-?- hist_val(200,100).
-% show the distribution of values with concentration parameter 10. Should look
+?- hist_val(2000,100).
+% show the distribution of values over 2000 samples from a DP with concentration parameter 10. Should look
 % like row 2 of https://en.wikipedia.org/wiki/Dirichlet_process#/media/File:Dirichlet_process_draws.svg
 
 */
@@ -85,5 +85,5 @@ pair(A,B,A:B).
 hist_val(Samples,NBins):-
   mc_sample_arg_first(dp_n_values(0,Samples,10.0,V,[10.0],_),1,V,L),
   L=[Vs-_],
-  histogram_r(Vs,NBins).
+  histogram_r(Vs,[nbins(NBins)]).
 

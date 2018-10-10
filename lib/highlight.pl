@@ -3,7 +3,7 @@
     Author:        Jan Wielemaker
     E-mail:        J.Wielemaker@vu.nl
     WWW:           http://www.swi-prolog.org
-    Copyright (c)  2014-2016, VU University Amsterdam
+    Copyright (c)  2014-2017, VU University Amsterdam
     All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
@@ -48,6 +48,7 @@
 :- use_module(library(prolog_xref)).
 :- use_module(library(memfile)).
 :- use_module(library(prolog_colour)).
+:- use_module(library(lazy_lists)).
 :- if(exists_source(library(helpidx))).
 :- use_module(library(helpidx), [predicate/5]).
 :- endif.
@@ -209,6 +210,7 @@ create_editor(UUID, Editor, Change) :-
 create_editor(UUID, Editor, _Change) :-
 	fetch_editor(UUID, Editor).
 
+% editor and lock are left to symbol-GC if this fails.
 register_editor(UUID, Editor, Role, Lock, Now) :-
 	\+ current_editor(UUID, _, _, _, _),
 	mutex_lock(Lock),
@@ -337,20 +339,25 @@ release_editor(UUID) :-
 check_unlocked :-
 	check_unlocked(unknown).
 
+%!	check_unlocked(+Reason)
+%
+%	Verify that all editors locked by this thread are unlocked
+%	again.
+
 check_unlocked(Reason) :-
 	thread_self(Me),
 	current_editor(_UUID, _TB, _Role, Lock, _),
 	mutex_property(Lock, status(locked(Me, _Count))), !,
+	unlock(Me, Lock),
 	print_message(error, locked(Reason, Me)),
 	assertion(fail).
 check_unlocked(_).
 
-unlocked_editor(UUID) :-
-	thread_self(Me),
-	current_editor(UUID, _TB, _Role, Lock, _),
+unlock(Me, Lock) :-
 	mutex_property(Lock, status(locked(Me, _Count))), !,
-	fail.
-unlocked_editor(_).
+	mutex_unlock(Lock),
+	unlock(Me, Lock).
+unlock(_, _).
 
 %%	update_access(+UUID)
 %
@@ -423,9 +430,9 @@ codemirror_leave_(Request) :-
 %	Mark that our cross-reference data might be obsolete
 
 mark_changed(MemFile, Changed) :-
-	(   Changed == true
-	->  current_editor(UUID, MemFile, _Role, _, _),
-	    retractall(xref_upto_data(UUID))
+	(   Changed == true,
+	    current_editor(UUID, MemFile, _Role, _, _)
+	->  retractall(xref_upto_data(UUID))
 	;   true
 	).
 
@@ -571,23 +578,11 @@ string_source_id(String, SourceID) :-
 
 shadow_editor(Data, TB) :-
 	atom_string(UUID, Data.get(uuid)),
-	fetch_editor(UUID, TB), !,
-	(   Text = Data.get(text)
-	->  size_memory_file(TB, Size),
-	    delete_memory_file(TB, 0, Size),
-	    insert_memory_file(TB, 0, Text),
-	    mark_changed(TB, true)
-	;   Changes = Data.get(changes)
-	->  (   debug(cm(change), 'Patch editor for ~p', [UUID]),
-		catch(maplist(apply_change(TB, Changed), Changes), E,
-		      (release_editor(UUID), throw(E)))
-	    ->	true
-	    ;	release_editor(UUID),
-		assertion(unlocked_editor(UUID)),
-		throw(cm(out_of_sync))
-	    ),
-	    mark_changed(TB, Changed)
-	).
+	setup_call_catcher_cleanup(
+	    fetch_editor(UUID, TB),
+	    once(update_editor(Data, UUID, TB)),
+	    Catcher,
+	    cleanup_update(Catcher, UUID)), !.
 shadow_editor(Data, TB) :-
 	Text = Data.get(text), !,
 	atom_string(UUID, Data.uuid),
@@ -601,6 +596,25 @@ shadow_editor(Data, TB) :-
 	create_editor(UUID, TB, Data).
 shadow_editor(_Data, _TB) :-
 	throw(cm(existence_error)).
+
+update_editor(Data, _UUID, TB) :-
+	Text = Data.get(text), !,
+	size_memory_file(TB, Size),
+	delete_memory_file(TB, 0, Size),
+	insert_memory_file(TB, 0, Text),
+	mark_changed(TB, true).
+update_editor(Data, UUID, TB) :-
+	Changes = Data.get(changes), !,
+	(   debug(cm(change), 'Patch editor for ~p', [UUID]),
+	    maplist(apply_change(TB, Changed), Changes)
+	->  true
+	;   throw(cm(out_of_sync))
+	),
+	mark_changed(TB, Changed).
+
+cleanup_update(exit, _) :- !.
+cleanup_update(_, UUID) :-
+	release_editor(UUID).
 
 :- thread_local
 	token/3.
@@ -775,7 +789,11 @@ style(neck(Neck),     neck, [ text(Text) ]) :-
 style(head(Class, Head), Type, [ text, arity(Arity) ]) :-
 	goal_arity(Head, Arity),
 	head_type(Class, Type).
+style(goal_term(Class, {_}), brace_term_open-brace_term_close,
+      [ name({}), arity(1) | More ]) :-
+	goal_type(Class, _Type, More).
 style(goal(Class, Goal), Type, [ text, arity(Arity) | More ]) :-
+	Goal \= {_},
 	goal_arity(Goal, Arity),
 	goal_type(Class, Type, More).
 style(file_no_depend(Path), file_no_depends,		   [text, path(Path)]).
@@ -800,6 +818,7 @@ style(delimiter,	 delimiter,			   [text]).
 style(identifier,	 identifier,			   [text]).
 style(module(_Module),   module,			   [text]).
 style(error,		 error,				   [text]).
+style(constraint(Set),   constraint,			   [text, set(Set)]).
 style(type_error(Expect), error,		      [text,expected(Expect)]).
 style(syntax_error(_Msg,_Pos), syntax_error,		   []).
 style(instantiation_error, instantiation_error,	           [text]).
@@ -856,6 +875,7 @@ neck_text(directive,    (:-)).
 head_type(exported,	 head_exported).
 head_type(public(_),	 head_public).
 head_type(extern(_),	 head_extern).
+head_type(extern(_,_),	 head_extern).
 head_type(dynamic,	 head_dynamic).
 head_type(multifile,	 head_multifile).
 head_type(unreferenced,	 head_unreferenced).
@@ -879,6 +899,7 @@ goal_type(dynamic(Line),      goal_dynamic,	 [line(Line)]).
 goal_type(multifile(Line),    goal_multifile,	 [line(Line)]).
 goal_type(expanded,	      goal_expanded,	 []).
 goal_type(extern(_),	      goal_extern,	 []).
+goal_type(extern(_,_),	      goal_extern,	 []).
 goal_type(recursion,	      goal_recursion,	 []).
 goal_type(meta,		      goal_meta,	 []).
 goal_type(foreign(_),	      goal_foreign,	 []).
@@ -952,15 +973,18 @@ css_style(Style, Style).
 %	True if RGB is the color for the named X11 color.
 
 x11_color(Name, R, G, B) :-
-	(   x11_color_cache(_,_,_,_)
+	(   x11_colors_done
 	->  true
-	;   load_x11_colours
+	;   with_mutex(swish_highlight, load_x11_colours)
 	),
 	x11_color_cache(Name, R, G, B).
 
 :- dynamic
-	x11_color_cache/4.
+	x11_color_cache/4,
+	x11_colors_done/0.
 
+load_x11_colours :-
+	x11_colors_done, !.
 load_x11_colours :-
 	source_file(load_x11_colours, File),
 	file_directory_name(File, Dir),
@@ -970,7 +994,8 @@ load_x11_colours :-
 	    ( lazy_list(lazy_read_lines(In, [as(string)]), List),
 	      maplist(assert_colour, List)
 	    ),
-	    close(In)).
+	    close(In)),
+	asserta(x11_colors_done).
 
 assert_colour(String) :-
 	split_string(String, "\s\t\r", "\s\t\r", [RS,GS,BS|NameParts]),
@@ -980,6 +1005,8 @@ assert_colour(String) :-
 	atomic_list_concat(NameParts, '_', Name0),
 	downcase_atom(Name0, Name),
 	assertz(x11_color_cache(Name, R, G, B)).
+
+:- catch(initialization(load_x11_colours, prepare_state), _, true).
 
 %%	css(?Context, ?Selector, -Style) is nondet.
 %
@@ -1040,7 +1067,8 @@ token_info(Token) -->
 	{ _{type:Type, text:Name, arity:Arity} :< Token,
 	  goal_type(_, Type, _), !,
 	  ignore(token_predicate_module(Token, Module)),
-	  predicate_info(Module:Name/Arity, Info)
+	  text_arity_pi(Name, Arity, PI),
+	  predicate_info(Module:PI, Info)
 	},
 	pred_info(Info).
 
@@ -1057,13 +1085,17 @@ pred_tags(Info) -->
 pred_summary(Info) -->
 	html(span(class('pred-summary'), Info.get(summary))).
 
-
 %%	token_predicate_module(+Token, -Module) is semidet.
 %
 %	Try to extract the module from the token.
 
 token_predicate_module(Token, Module) :-
 	source_file_property(Token.get(file), module(Module)), !.
+
+text_arity_pi('[', 2, consult/1) :- !.
+text_arity_pi(']', 2, consult/1) :- !.
+text_arity_pi(Name, Arity, Name/Arity).
+
 
 %%	predicate_info(+PI, -Info:list(dict)) is det.
 %
